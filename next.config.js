@@ -24,8 +24,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-```
-
-**2. Abre `app/page.tsx`** y agrega esta línea después del import:
-```
-export const dynamic = 'force-dynamic';
