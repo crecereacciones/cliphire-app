@@ -16,25 +16,29 @@ const NAV_ITEMS = [
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { profile, setProfile, setIsLoading } = useAppStore();
+  const [ready, setReady] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
 
   useEffect(() => {
     const getProfile = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/auth');
-        return;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+          if (data) setProfile(data as Profile);
+        }
+      } catch (err) {
+        console.error('Error loading profile:', err);
+      } finally {
+        setIsLoading(false);
+        setReady(true);
       }
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      
-      if (data) setProfile(data as Profile);
-      setIsLoading(false);
     };
 
     getProfile();
@@ -60,9 +64,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const activeTab = NAV_ITEMS.find(item => pathname.startsWith(item.href))?.id || 'clips';
 
+  if (!ready) {
+    return (
+      <div className="max-w-lg mx-auto h-screen flex items-center justify-center bg-surface-dark">
+        <div className="text-center">
+          <div className="text-4xl mb-3 animate-pulse">✂️</div>
+          <p className="text-zinc-500 text-sm">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto h-screen flex flex-col bg-surface-dark border-x border-surface-border relative">
-      {/* Header - hidden on clips page for full immersion */}
       {pathname !== '/clips' && (
         <header className="flex items-center justify-between px-5 py-3 border-b border-surface-border shrink-0">
           <h1 className="text-xl font-black tracking-tight">
@@ -81,12 +95,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </header>
       )}
 
-      {/* Main content */}
       <main className="flex-1 overflow-hidden">
         {children}
       </main>
 
-      {/* Bottom navigation */}
       <nav className="flex justify-around py-2 pb-4 border-t border-surface-border shrink-0 bg-surface-dark">
         {NAV_ITEMS.map(item => (
           <button key={item.id}
