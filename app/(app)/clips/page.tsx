@@ -18,38 +18,51 @@ export default function ClipsPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const touchStartRef = useRef<number | null>(null);
-  const { profile } = useAppStore();
+  const { profile, isLoading: profileLoading } = useAppStore();
   const supabase = createClient();
   const router = useRouter();
 
-  // Load clips
+  // Load clips - don't wait for profile
   useEffect(() => {
     const loadClips = async () => {
-      const { data, error } = await supabase
-        .from('clips')
-        .select('*, profile:profiles(*)')
-        .order('created_at', { ascending: false })
-        .limit(50);
+      try {
+        const { data } = await supabase
+          .from('clips')
+          .select('*, profile:profiles(*)')
+          .order('created_at', { ascending: false })
+          .limit(50);
 
-      if (data && data.length > 0) {
-        // Check which clips user has liked
-        if (profile) {
-          const { data: likes } = await supabase
-            .from('likes')
-            .select('clip_id')
-            .eq('user_id', profile.id)
-            .not('clip_id', 'is', null);
-          
-          const likedIds = new Set(likes?.map(l => l.clip_id) || []);
-          setClips(data.map((c: any) => ({ ...c, liked_by_user: likedIds.has(c.id) })));
-        } else {
+        if (data && data.length > 0) {
           setClips(data);
         }
+      } catch (err) {
+        console.error('Error loading clips:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
     loadClips();
-  }, [profile]);
+  }, []);
+
+  // Check likes separately when profile loads
+  useEffect(() => {
+    if (!profile || clips.length === 0) return;
+    const checkLikes = async () => {
+      try {
+        const { data: likes } = await supabase
+          .from('likes')
+          .select('clip_id')
+          .eq('user_id', profile.id)
+          .not('clip_id', 'is', null);
+        
+        const likedIds = new Set(likes?.map(l => l.clip_id) || []);
+        setClips(prev => prev.map(c => ({ ...c, liked_by_user: likedIds.has(c.id) })));
+      } catch (err) {
+        console.error('Error checking likes:', err);
+      }
+    };
+    checkLikes();
+  }, [profile, clips.length]);
 
   // Auto-play current video
   useEffect(() => {
@@ -63,7 +76,6 @@ export default function ClipsPage() {
       }
     });
 
-    // Increment view count
     if (clips[currentIdx]) {
       supabase.from('clips').update({ views_count: clips[currentIdx].views_count + 1 }).eq('id', clips[currentIdx].id).then(() => {});
     }
@@ -86,14 +98,10 @@ export default function ClipsPage() {
     touchStartRef.current = null;
   };
 
-  // Like/unlike
   const toggleLike = async (clip: Clip) => {
     if (!profile) { toast.error('Inicia sesión para dar like'); return; }
-
     const liked = clip.liked_by_user;
-    // Optimistic update
     setClips(prev => prev.map(c => c.id === clip.id ? { ...c, liked_by_user: !liked, likes_count: c.likes_count + (liked ? -1 : 1) } : c));
-
     if (liked) {
       await supabase.from('likes').delete().eq('user_id', profile.id).eq('clip_id', clip.id);
     } else {
@@ -101,7 +109,6 @@ export default function ClipsPage() {
     }
   };
 
-  // Load comments
   const loadComments = async (clipId: string) => {
     const { data } = await supabase
       .from('comments')
@@ -151,7 +158,6 @@ export default function ClipsPage() {
     <div ref={containerRef} className="h-full relative bg-black overflow-hidden"
       onWheel={handleWheel} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
 
-      {/* Header overlay */}
       <div className="absolute top-0 left-0 right-0 z-20 gradient-top px-5 py-4 flex items-center justify-center">
         <h1 className="text-lg font-black tracking-tight">
           <span className="brand-gradient-text">Clip</span>
@@ -159,7 +165,6 @@ export default function ClipsPage() {
         </h1>
       </div>
 
-      {/* Video */}
       <div className="absolute inset-0">
         {clips.map((c, i) => (
           <div key={c.id} className="absolute inset-0 transition-opacity duration-300"
@@ -175,12 +180,9 @@ export default function ClipsPage() {
         ))}
       </div>
 
-      {/* Gradient bottom */}
       <div className="absolute bottom-0 left-0 right-0 h-1/2 gradient-bottom pointer-events-none" />
 
-      {/* Right side actions */}
       <div className="absolute right-3 bottom-28 flex flex-col gap-5 items-center z-10">
-        {/* Avatar */}
         <button onClick={() => clipProfile && router.push(`/profile/${clipProfile.id}`)}
           className="w-11 h-11 rounded-full bg-surface border-2 border-brand flex items-center justify-center text-xl">
           {clipProfile?.avatar_url ? (
@@ -188,7 +190,6 @@ export default function ClipsPage() {
           ) : '👤'}
         </button>
 
-        {/* Like */}
         <button onClick={() => toggleLike(clip)} className="flex flex-col items-center gap-1">
           <span className={`text-[28px] transition-transform ${clip.liked_by_user ? 'animate-heart-pop' : 'grayscale brightness-200'}`}>
             {clip.liked_by_user ? '❤️' : '🤍'}
@@ -196,21 +197,18 @@ export default function ClipsPage() {
           <span className="text-white text-xs font-bold">{formatNumber(clip.likes_count)}</span>
         </button>
 
-        {/* Comments */}
         <button onClick={() => { setShowComments(true); loadComments(clip.id); }}
           className="flex flex-col items-center gap-1">
           <span className="text-[26px]">💬</span>
           <span className="text-white text-xs font-bold">{formatNumber(clip.comments_count)}</span>
         </button>
 
-        {/* Share */}
         <button className="flex flex-col items-center gap-1">
           <span className="text-[26px]">↗️</span>
           <span className="text-white text-xs font-bold">{formatNumber(clip.shares_count)}</span>
         </button>
       </div>
 
-      {/* Bottom info */}
       <div className="absolute bottom-4 left-4 right-16 z-10">
         <button onClick={() => clipProfile && router.push(`/profile/${clipProfile.id}`)}
           className="flex items-center gap-2 mb-2">
@@ -234,14 +232,12 @@ export default function ClipsPage() {
         )}
       </div>
 
-      {/* Progress dots */}
       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex flex-col gap-1 z-10">
         {clips.slice(0, 15).map((_, i) => (
           <div key={i} className={`rounded-full transition-all ${i === currentIdx ? 'w-1 h-4 bg-brand' : 'w-1 h-1 bg-white/30'}`} />
         ))}
       </div>
 
-      {/* Comments panel */}
       {showComments && (
         <>
           <div className="absolute inset-0 bg-black/60 z-30" onClick={() => setShowComments(false)} />
@@ -284,7 +280,6 @@ export default function ClipsPage() {
         </>
       )}
 
-      {/* Swipe hint */}
       {currentIdx === 0 && clips.length > 1 && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 text-white/30 text-xs text-center z-10 animate-pulse">
           ↑ Desliza para más clips
